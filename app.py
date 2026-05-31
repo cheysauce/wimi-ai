@@ -125,33 +125,17 @@ with tab_chapters:
         )
 
         if audio:
-            import tempfile, io
+            import tempfile
             st.audio(audio["bytes"])
             with st.spinner("Transcribing audio..."):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
                     f.write(audio["bytes"])
                     tmp_path = f.name
-                segments, _ = whisper_model.transcribe(tmp_path, language="zh")
-                transcript = "".join([seg.text for seg in segments])
+            segments, _ = whisper_model.transcribe(tmp_path, language="zh")
+            transcript = "".join([seg.text for seg in segments])
             st.success("Transcription complete!")
             st.text_area("Transcribed text (edit if needed)", value=transcript, height=180, key="stt_result")
             chapters[chapter_label] = st.session_state.get("stt_result", transcript)
-
-    if uploaded_files:
-        for i, file in enumerate(uploaded_files, start=1):
-            name = file.name.rsplit(".", 1)[0] or f"Chapter {i}"
-            chapters[name] = read_text_file(file)
-        st.success(f"Loaded {len(chapters)} uploaded chapter file(s).")
-    else:
-        chapter_count = st.number_input("Number of chapters to compare", min_value=1, max_value=10, value=2, step=1)
-        for i in range(1, int(chapter_count) + 1):
-            chapters[f"Chapter {i}"] = st.text_area(
-                f"Chapter {i} text",
-                height=180,
-                placeholder="Paste Chinese textbook text here...",
-                key=f"chapter_text_{i}",
-            )
-
 with tab_known:
     st.subheader("Known-word list")
     st.write("Words in this list can be hidden from the results, so the learner focuses on new vocabulary.")
