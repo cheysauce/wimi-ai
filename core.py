@@ -1,13 +1,5 @@
 """
 Core functions for Chinese Textbook Vocabulary Tool.
-
-Features:
-- Chinese word segmentation with jieba
-- Known-word filtering
-- Pinyin generation with pypinyin
-- Dictionary lookup for English meanings
-- Chapter-by-chapter frequency comparison
-- Study priority / difficulty scoring based on frequency + learner level
 """
 
 from __future__ import annotations
@@ -15,14 +7,13 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 from typing import Iterable
 
 import jieba
 import pandas as pd
 from pypinyin import Style, lazy_pinyin
-
 
 CHINESE_RE = re.compile(r"[\u4e00-\u9fff]+")
 
@@ -33,48 +24,37 @@ DEFAULT_STOPWORDS = {
     "就是", "还是", "可以", "没有", "不是", "被", "给", "把", "让",
 }
 
-
 def read_text_file(uploaded_file) -> str:
-    """Read a Streamlit uploaded text file as UTF-8, with a fallback."""
     raw = uploaded_file.read()
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
         return raw.decode("utf-8-sig", errors="ignore")
 
-
 def load_word_set(path: str | Path | None, default: Iterable[str] | None = None) -> set[str]:
-    """Load one word per line from a text file."""
     words = set(default or [])
     if not path:
         return words
-
     file_path = Path(path)
     if not file_path.exists():
         return words
-
     for line in file_path.read_text(encoding="utf-8").splitlines():
         word = line.strip()
         if word and not word.startswith("#"):
             words.add(word)
     return words
 
-
 def parse_word_list(text: str) -> set[str]:
-    """Parse words from a text box. Accepts one word per line, spaces, or commas."""
     if not text:
         return set()
     pieces = re.split(r"[\s,，、;；]+", text)
     return {piece.strip() for piece in pieces if piece.strip()}
 
-
 def clean_text(text: str) -> str:
-    """Basic cleanup for textbook/transcript text."""
     text = re.sub(r"\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,.]\d{3}", " ", text)
     text = re.sub(r"[A-Za-z0-9]+", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
-
 
 def extract_chinese_words(
     text: str,
@@ -83,11 +63,9 @@ def extract_chinese_words(
     min_len: int = 1,
     hide_known: bool = True,
 ) -> list[str]:
-    """Segment Chinese text and return filtered words."""
     stopwords = stopwords or set()
     known_words = known_words or set()
     words: list[str] = []
-
     for token in jieba.cut(clean_text(text)):
         token = token.strip()
         if not CHINESE_RE.fullmatch(token):
@@ -99,69 +77,63 @@ def extract_chinese_words(
         if hide_known and token in known_words:
             continue
         words.append(token)
-
     return words
 
-
 def load_dictionary(path: str | Path | None) -> dict[str, str]:
-    """Load dictionary and HSK levels directly from the HSK xlsx file."""
+    """Load dictionary from HSK xlsx file (single-sheet or multi-sheet) or CSV."""
     if not path or not Path(path).exists():
         return {}
-    
     path = Path(path)
-    
-    # If it's the xlsx file, parse all HSK sheets
     if path.suffix == '.xlsx':
         xl = pd.ExcelFile(path)
-        hsk_sheets = [s for s in xl.sheet_names if 'HSK' in s and 'HSK1-HSK6' not in s and 'Tabel' in s and '-' in s and len(s.split('-')[0].strip()) <= 5]
         result = {}
-        for sheet in hsk_sheets:
-            df = xl.parse(sheet, header=None).iloc[2:].reset_index(drop=True)
-            df.columns = ['num', 'simplified', 'traditional', 'pinyin_num', 'pinyin', 'english']
-            df = df.dropna(subset=['simplified', 'english'])
-            for _, row in df.iterrows():
-                word = str(row['simplified']).strip()
-                eng = str(row['english']).strip()
-                if word and eng and word != 'nan':
-                    result.setdefault(word, eng)  # first occurrence wins
+        for sheet in xl.sheet_names:
+            df = xl.parse(sheet, header=None)
+            if df.shape[1] >= 6:
+                for _, row in df.iterrows():
+                    word = str(row.iloc[1]).strip()
+                    eng = str(row.iloc[5]).strip()
+                    if word and eng and word != 'nan' and eng != 'nan':
+                        result.setdefault(word, eng)
         return result
-    
-    # Fallback: original CSV behaviour
     df = pd.read_csv(path)
     if not {'word', 'english'}.issubset(df.columns):
         raise ValueError("Dictionary CSV must have columns: word, english")
     return {str(r['word']).strip(): str(r['english']).strip() for _, r in df.iterrows() if str(r['word']).strip()}
 
-
 def load_hsk_levels(path: str | Path | None) -> dict[str, int]:
-    """Load HSK levels directly from the HSK xlsx file."""
+    """Load HSK levels from HSK xlsx file (single-sheet or multi-sheet) or CSV."""
     if not path or not Path(path).exists():
         return {}
-    
     path = Path(path)
-    
-    # If it's the xlsx file, parse all HSK sheets
     if path.suffix == '.xlsx':
         xl = pd.ExcelFile(path)
-        hsk_level_map = {
-            'HSK1': 1, 'HSK2': 2, 'HSK3': 3,
-            'HSK4': 4, 'HSK5': 5, 'HSK6': 6,
-        }
         result = {}
+        hsk_map = {
+            'HSK 1': 1, 'HSK1': 1, 'HSK 2': 2, 'HSK2': 2,
+            'HSK 3': 3, 'HSK3': 3, 'HSK 4': 4, 'HSK4': 4,
+            'HSK 5': 5, 'HSK5': 5, 'HSK 6': 6, 'HSK6': 6,
+        }
         for sheet in xl.sheet_names:
-            level = next((v for k, v in hsk_level_map.items() if sheet.startswith(k) and 'HSK1-HSK6' not in sheet), None)
-            if level is None:
-                continue
-            df = xl.parse(sheet, header=None).iloc[2:].reset_index(drop=True)
-            df.columns = ['num', 'simplified', 'traditional', 'pinyin_num', 'pinyin', 'english']
-            df = df.dropna(subset=['simplified'])
-            for _, row in df.iterrows():
-                word = str(row['simplified']).strip()
-                if word and word != 'nan':
-                    result.setdefault(word, level)
+            df = xl.parse(sheet, header=None)
+            if df.shape[1] >= 7:
+                # New format: single sheet with hsk level in col 6
+                for _, row in df.iterrows():
+                    word = str(row.iloc[1]).strip()
+                    level_str = str(row.iloc[6]).strip()
+                    level = hsk_map.get(level_str)
+                    if word and level and word != 'nan':
+                        result.setdefault(word, level)
+            elif df.shape[1] == 6:
+                # Old format: per-level sheets
+                level = next((v for k, v in hsk_map.items() if sheet.startswith(k) and 'HSK1-HSK6' not in sheet), None)
+                if level is None:
+                    continue
+                for _, row in df.iloc[2:].iterrows():
+                    word = str(row.iloc[1]).strip()
+                    if word and word != 'nan':
+                        result.setdefault(word, level)
         return result
-    
-    # Fallback: original CSV behaviour
     df = pd.read_csv(path)
     if not {'word', 'hsk_level'}.issubset(df.columns):
         raise ValueError("HSK CSV must have columns: word, hsk_level")
@@ -177,12 +149,9 @@ def load_hsk_levels(path: str | Path | None) -> dict[str, int]:
     return result
 
 def word_to_pinyin(word: str) -> str:
-    """Convert a Chinese word to pinyin with tone marks."""
     return " ".join(lazy_pinyin(word, style=Style.TONE))
 
-
 def difficulty_label(hsk_level: int | None, learner_level: int) -> str:
-    """Readable difficulty label compared with learner level."""
     if hsk_level is None:
         return "Unknown level"
     if hsk_level <= learner_level:
@@ -191,21 +160,9 @@ def difficulty_label(hsk_level: int | None, learner_level: int) -> str:
         return "Good challenge"
     return "Hard"
 
-
 def study_priority_score(total_count: int, hsk_level: int | None, learner_level: int, word: str) -> float:
-    """
-    Score words for study priority.
-
-    Higher score = more important to study now.
-    It combines:
-    - frequency in the current textbook chapters
-    - difficulty compared with learner level
-    - unknown HSK level penalty
-    - word length as a small signal of complexity
-    """
     frequency_component = min(60.0, math.log1p(total_count) * 25.0)
     length_component = min(12.0, max(0, len(word) - 1) * 3.0)
-
     if hsk_level is None:
         level_component = 25.0
     else:
@@ -216,9 +173,7 @@ def study_priority_score(total_count: int, hsk_level: int | None, learner_level:
             level_component = 18.0
         else:
             level_component = min(35.0, 18.0 + (level_gap - 1) * 8.0)
-
     return round(frequency_component + level_component + length_component, 1)
-
 
 def create_chapter_frequency_table(
     chapters: dict[str, str],
@@ -231,13 +186,6 @@ def create_chapter_frequency_table(
     hsk_levels: dict[str, int] | None = None,
     learner_level: int = 2,
 ) -> pd.DataFrame:
-    """
-    Create a vocabulary table across one or many chapters.
-
-    Returns a DataFrame with columns:
-    rank, word, pinyin, english, total_count, percent, chapters_seen,
-    per-chapter counts, hsk_level, difficulty, study_priority_score
-    """
     known_words = known_words or set()
     stopwords = stopwords or set()
     dictionary = dictionary or {}
@@ -275,10 +223,8 @@ def create_chapter_frequency_table(
             "difficulty": difficulty_label(hsk_level, learner_level),
             "study_priority_score": study_priority_score(total_count, hsk_level, learner_level, word),
         }
-
         for chapter_name, counter in chapter_counters.items():
             row[chapter_name] = int(counter.get(word, 0))
-
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -292,14 +238,11 @@ def create_chapter_frequency_table(
     df.insert(0, "rank", range(1, len(df) + 1))
     return df
 
-
 def extract_json_object(text: str) -> dict:
-    """Extract JSON object from an AI response, even if it contains extra text."""
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-
     match = re.search(r"\{.*\}", text, flags=re.DOTALL)
     if not match:
         return {}
@@ -308,21 +251,12 @@ def extract_json_object(text: str) -> dict:
     except json.JSONDecodeError:
         return {}
 
-
 def translate_words_with_openai(words: list[str], api_key: str, model: str = "gpt-4o-mini") -> dict[str, str]:
-    """
-    Optional AI translation helper.
-
-    This is only used when the user provides an OpenAI API key in the Streamlit app.
-    For production, cache the results in a database or CSV to avoid repeated API calls.
-    """
     if not words:
         return {}
     if not api_key:
         raise ValueError("OpenAI API key is required for AI translation.")
-
     from openai import OpenAI
-
     client = OpenAI(api_key=api_key)
     unique_words = list(dict.fromkeys(words))
     prompt = (
@@ -331,7 +265,6 @@ def translate_words_with_openai(words: list[str], api_key: str, model: str = "gp
         "Do not include explanations outside JSON.\n\n"
         f"Words: {unique_words}"
     )
-
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
@@ -341,7 +274,5 @@ def translate_words_with_openai(words: list[str], api_key: str, model: str = "gp
     data = extract_json_object(content)
     return {str(k): str(v) for k, v in data.items()}
 
-
 def save_words(path: str | Path, words: set[str]) -> None:
-    """Save one word per line."""
     Path(path).write_text("\n".join(sorted(words)), encoding="utf-8")
