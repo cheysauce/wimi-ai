@@ -1,0 +1,8 @@
+streamlit>=1.35.0
+pandas>=2.0.0
+jieba>=0.42.1
+pypinyin>=0.51.0
+openai>=1.30.0
+faster-whisper>=1.0.0
+streamlit-mic-recorder>=0.0.4
+openpyxl>=3.1.0
